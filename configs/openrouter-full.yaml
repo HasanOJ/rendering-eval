@@ -1,0 +1,6 @@
+# Paid execution is opt-in through the CLI; key comes from the environment.
+output_dir: results/belebele-openrouter-qwen-full
+n_ids: 900
+backend: openrouter
+model_id: qwen/qwen3.6-27b
+openrouter_free_only: false

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rendering-eval"
+version = "0.1.0"
+description = "Portable, paired Belebele text and rendered-image evaluation"
+requires-python = ">=3.10"
+dependencies = [
+  "huggingface-hub>=1.0,<3", "numpy>=1.26,<3", "Pillow>=10,<14",
+  "PyYAML>=6,<7", "filelock>=3.16", "matplotlib>=3.8,<4", "pandas>=2,<4",
+  "transformers==5.20.1", "torch>=2.6,<3", "torchvision>=0.21,<1",
+  "accelerate>=1.5,<2", "bitsandbytes==0.50.2",
+  "pixel-renderer @ git+https://github.com/sign/pixel-renderer.git@9706296afca3dc156d76ff82450fff0fefc6f3d7",
+]
+
+[project.optional-dependencies]
+notebook = ["ipykernel>=6", "nbformat>=5", "nbclient>=0.10", "ipywidgets>=8"]
+test = ["pytest>=8", "nbformat>=5", "nbclient>=0.10"]
+pango = ["pycairo>=1.20", "PyGObject>=3.42,<3.52"]
+
+[project.scripts]
+rendering-eval = "rendering_eval.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: downloads pinned datasets/fonts/processors; opt in with RUN_INTEGRATION=1"]

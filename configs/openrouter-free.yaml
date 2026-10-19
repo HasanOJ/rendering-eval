@@ -1,0 +1,7 @@
+# One English text/image pair. Free variants still require OPENROUTER_API_KEY.
+output_dir: results/belebele-openrouter-free-nemotron
+n_ids: 1
+languages: [eng_Latn]
+backend: openrouter
+model_id: nvidia/nemotron-3.5-super-vl:free
+openrouter_free_only: true

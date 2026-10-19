@@ -1,0 +1,24 @@
+# Relative to the working directory; usable in WSL and a GPU cloud checkout.
+output_dir: results/belebele-smoke-4bit
+n_ids: 2
+backend: local
+quantization: 4bit
+seed: 42
+languages:
+  - eng_Latn
+  - rus_Cyrl
+  - arb_Arab
+  - hin_Deva
+  - ben_Beng
+  - tel_Telu
+  - tha_Thai
+  - khm_Khmr
+  - mya_Mymr
+  - zho_Hans
+  - jpn_Jpan
+  - kor_Hang
+font_size: 24
+width: 1024
+margin: 24
+max_soft_tokens: 280
+max_new_tokens: 16

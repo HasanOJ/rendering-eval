@@ -1,0 +1,5 @@
+# All 900 aligned IDs in the same 12-language subset: 21,600 predictions.
+output_dir: results/belebele-full-4bit
+n_ids: 900
+backend: local
+quantization: 4bit
