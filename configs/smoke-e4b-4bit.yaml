@@ -1,0 +1,8 @@
+# Historical baseline: retain the exact pinned checkpoint and result directory.
+output_dir: results/belebele-smoke-4bit
+n_ids: 2
+backend: local
+model_id: unsloth/gemma-4-E4B-it-unsloth-bnb-4bit
+model_revision: 6f10b2aa522ba471321d8246fd71a3dfa8c5b9a2
+quantization: 4bit
+prequantized: true

@@ -47,3 +47,33 @@ def test_error_notebook_is_clean_and_inference_is_absent():
     assert "local_files_only=True" in code
     assert "GemmaBackend" not in code
     assert "from rendering_eval.runner" not in code
+    assert 'RESULTS_DIR = Path("results/belebele-e4b-8bit-full")' in code
+    assert "explorer.representative_cases" in code
+    assert "import ErrorExplorer, CASE_STUDIES" not in code
+
+
+def test_representative_cases_use_current_scores_without_source_loading(completed_run, monkeypatch):
+    path = completed_run / "predictions.jsonl"
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    image = next(r for r in rows if r["mode"] == "image" and not r["correct"])
+    image.update(raw_response="Please provide the passage")
+    image.update(score_answer(image["raw_response"], image["answer"], truncated=True))
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    before = path.read_bytes()
+    explorer = ErrorExplorer(completed_run)
+    monkeypatch.setattr(explorer, "sources", lambda: pytest.fail("Case selection must not load source text"))
+    studies = explorer.representative_cases()
+    assert studies == explorer.representative_cases()
+    assert len({(s["sample_id"], s["language"]) for s in studies}) == len(studies)
+    assert {s["title"].split(": ", 1)[1] for s in studies} >= {"invalid image", "text only", "image only"}
+    assert "requests passage; token limit" in studies[0]["note"]
+    for study in studies:
+        text = explorer.index[study["sample_id"], study["language"], "text"]
+        image = explorer.index[study["sample_id"], study["language"], "image"]
+        assert f"Gold {image['answer']}" in study["note"]
+        assert f"text {'correct' if text['correct'] else 'incorrect'};" in study["note"]
+        assert response_description(image) in study["note"]
+    assert len(explorer.representative_cases(limit=1)) == 1
+    with pytest.raises(ValueError, match="positive"):
+        explorer.representative_cases(limit=0)
+    assert path.read_bytes() == before

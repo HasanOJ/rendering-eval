@@ -1,8 +1,11 @@
 # Relative to the working directory; usable in WSL and a GPU cloud checkout.
-output_dir: results/belebele-smoke-4bit
+output_dir: results/belebele-e4b-8bit-smoke
 n_ids: 2
 backend: local
-quantization: 4bit
+model_id: google/gemma-4-E4B-it
+model_revision: ee0ef6023621cff504d758262d4e04895a5af4a2
+quantization: 8bit
+prequantized: false
 seed: 42
 languages:
   - eng_Latn

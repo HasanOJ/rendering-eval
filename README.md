@@ -1,6 +1,6 @@
 # Belebele: text versus rendered image
 
-Compare the same Belebele passage, question, and four choices delivered as text or as a rendered image. The default smoke test is **2 aligned IDs × 12 languages × 2 modalities = 48 predictions**, using local **Gemma 4 E4B in 4-bit NF4**. [Belebele.ipynb](Belebele.ipynb) provides in-memory previews and paired plots. The CLI supports local and OpenRouter evaluation with resumable JSON results.
+Compare the same Belebele passage, question, and four choices delivered as text or as a rendered image. The default smoke test is **2 aligned IDs × 12 languages × 2 modalities = 48 predictions**, using local **Gemma 4 E4B in 8-bit INT8**. **Gemma 4 12B in 4-bit NF4** is also configured. [Belebele_models.ipynb](Belebele_models.ipynb) provides model selection, in-memory previews, and paired plots with inference disabled by default. The CLI supports local and OpenRouter evaluation with resumable JSON results.
 
 ## Install in WSL or on a GPU cloud host
 
@@ -19,6 +19,16 @@ No notebook-specific environment bootstrap is required. The same checkout, confi
 
 ## Smoke test and full local evaluation
 
+| Model | Loading | Smoke config | Full config |
+| --- | --- | --- | --- |
+| Gemma 4 E4B, 8-bit (default) | Official BF16 source → bitsandbytes INT8 on load | `configs/smoke.yaml` | `configs/full.yaml` |
+| Gemma 4 12B, 4-bit | Official BF16 source → bitsandbytes NF4 with double quantization on load | `configs/smoke-12b-4bit.yaml` | `configs/full-12b-4bit.yaml` |
+| Historical E4B, 4-bit baseline | Pinned Unsloth prequantized NF4 | `configs/smoke-e4b-4bit.yaml` | `configs/full-e4b-4bit.yaml` |
+
+The two new variants use separate `results/belebele-e4b-8bit-{smoke,full}` and `results/belebele-12b-4bit-{smoke,full}` directories. The E4B INT8 full run completed all 21,600 predictions on the RTX 4070 with zero execution errors. The 12B variant has not yet been validated with real inference or for GPU fit. On the 12 GB RTX 4070, begin with a smoke run: unquantized embeddings, other retained modules, activations, and the KV cache also consume memory. The loader uses only GPU 0 and does not automatically offload to CPU or change precision.
+
+Both new variants download the official BF16 source weights into the normal Hub cache and quantize during loading: approximately **16.0 GB for E4B** and **23.9 GB for 12B**, about **39.9 GB combined**, in addition to existing caches. These are download sizes, not GPU-memory estimates. They do not reuse the old prequantized E4B weights. No model weights are downloaded merely by editing configs or analyzing saved results. Use the new notebook for these variants; the original `Belebele.ipynb` retains the saved historical outputs and its previous inference-enabled setting.
+
 ```bash
 # Two aligned IDs in all 12 languages: 48 predictions.
 .venv/bin/rendering-eval run --config configs/smoke.yaml
@@ -26,26 +36,46 @@ No notebook-specific environment bootstrap is required. The same checkout, confi
 # Full evaluation: all 900 IDs in the selected 12 languages, 21,600 predictions.
 .venv/bin/rendering-eval run --config configs/full.yaml
 
-# Equivalent explicit command.
-.venv/bin/rendering-eval run --config configs/smoke.yaml --n-ids 900 --output-dir results/belebele-full-4bit
+# 12B 4-bit: smoke first, then explicitly launch the full evaluation.
+.venv/bin/rendering-eval run --config configs/smoke-12b-4bit.yaml
+.venv/bin/rendering-eval run --config configs/full-12b-4bit.yaml
+
+# Return the completed historical E4B 4-bit full run without new inference.
+.venv/bin/rendering-eval run --config configs/full-e4b-4bit.yaml
 
 # Summarize existing results without loading the model.
-.venv/bin/rendering-eval analyze --output-dir results/belebele-full-4bit
+.venv/bin/rendering-eval analyze --output-dir results/belebele-e4b-8bit-full
 ```
 
-For the completed full run, open [Belebele_analysis.ipynb](Belebele_analysis.ipynb) and **Run All** with the project `.venv` kernel. It reads existing results without model loading, inference, downloads, or rendering. It includes per-language accuracy and paired gap intervals, paired outcomes, answer-choice distributions, invalid responses, processor resizing, page-height comparisons, and multilingual consistency. Bootstrap intervals resample passages, carrying their questions and translations together. Charts stay in notebook output; clear outputs before saving a clean copy. The original evaluation notebook remains separate.
+For the completed **E4B 8-bit** full run in `results/belebele-e4b-8bit-full`, open [Belebele_analysis.ipynb](Belebele_analysis.ipynb) and **Run All** with the project `.venv` kernel. It reads existing results without model loading, inference, downloads, or rendering. It includes per-language accuracy and measured accuracy differences, paired outcomes, answer-choice distributions, invalid responses, processor resizing, page-height comparisons, and multilingual consistency. Charts stay in notebook output; clear outputs before saving a clean copy. The original evaluation notebook remains separate.
 
-The [full-run report](reports/belebele-full-4bit.md) records the findings. To regenerate its text-only report and derived metrics, use `.venv/bin/python scripts/analyze_results.py --output-dir results/belebele-full-4bit`; this preserves the original evaluation artifacts.
+The [E4B 8-bit full-run report](reports/belebele-e4b-8bit-full.md) records the findings. To regenerate its text-only report and derived metrics, use `.venv/bin/python scripts/analyze_results.py --output-dir results/belebele-e4b-8bit-full`; this preserves the original evaluation artifacts. Both analysis notebooks default to this run and make no cross-run comparisons.
 
-For a closer investigation, open [Belebele_errors.ipynb](Belebele_errors.ipynb). It shows every invalid raw response, label-conditional accuracy/confusion plots, eight annotated cases, and a browser for any saved mistake with its aligned English reference. Source text is verified against manifest hashes and read strictly from the existing Hub cache. Optional previews reconstruct one processor input on CPU; no model weights or new predictions are loaded. The notebook keeps the original scores and result files intact and saves no image files.
+For a closer investigation, open [Belebele_errors.ipynb](Belebele_errors.ipynb). It shows invalid-response summaries (with an optional full row table), label-conditional accuracy/confusion plots, eight illustrative cases selected from the current run, and a browser for any saved mistake with its aligned English reference. Case notes are derived from the current saved scores and raw-response format. Source text is verified against manifest hashes and read strictly from the existing Hub cache. Optional previews reconstruct one processor input on CPU; no model weights or new predictions are loaded. The notebook keeps the original scores and result files intact and saves no image files.
 
-Repeat the same `run` command to resume. Successful predictions are preserved, including invalid model answers; missing work and execution failures are retried. Changing sample count, backend, model, quantization, or rendering requires a **new output directory**. Code changes require a fresh directory for incomplete runs; complete historical runs are returned unchanged with their original provenance and no new inference. The earlier 8-bit run remains in `results/belebele-smoke`; the new 4-bit run uses `results/belebele-smoke-4bit`.
+Repeat the same `run` command to resume. Successful predictions are preserved, including invalid model answers; missing work and execution failures are retried. Changing sample count, backend, model, quantization, or rendering requires a **new output directory**. Code changes require a fresh directory for incomplete runs; complete historical runs are returned unchanged with their original provenance and no new inference. The historical E4B 4-bit results remain in `results/belebele-smoke-4bit` and `results/belebele-full-4bit`; their explicit legacy configs retain the original experiment settings. Existing result files are never converted or rescored for a new model.
 
 The prequantized checkpoint is a third-party Unsloth conversion of Gemma. Its files total about 11 GB because embeddings and selected modules remain in BF16. The complete checkpoint is needed for inference; only loading is deferred until a run has missing predictions.
 
 The 12 variants are `eng_Latn`, `rus_Cyrl`, `arb_Arab`, `hin_Deva`, `ben_Beng`, `tel_Telu`, `tha_Thai`, `khm_Khmr`, `mya_Mymr`, `zho_Hans`, `jpn_Jpan`, and `kor_Hang`. Full evaluation means 900 IDs in this subset, not all 122 Belebele variants. Override `--languages eng_Latn arb_Arab` or `--n-ids 2` for a smaller run.
 
-Local inference directly loads a pinned prequantized bitsandbytes NF4 checkpoint; it does not download or convert the BF16 source checkpoint. It uses the saved double-quantization state and skip list, batch size 1, thinking disabled, greedy decoding, and a 16-token answer budget. Nonquantized modules use BF16 on supported GPUs and FP16 otherwise. Gemma E4B has large embedding tables that remain unquantized, so total GPU storage is considerably higher than 4-bit linear-weight storage alone. Reducing the number of test IDs reduces runtime, not model memory. There is no automatic precision change or CPU offloading. Model loading is deferred until predictions are missing, and internally created models are released after completion or failure. This checkpoint requires a BF16-capable GPU. Conversion of another source checkpoint is available only through the explicit `--quantize-on-load` option with matching model ID/revision and a new output directory.
+Local inference uses batch size 1, thinking disabled, greedy decoding, and a 16-token answer budget. Nonquantized modules use BF16 on supported GPUs and FP16 otherwise. The 12B model uses the installed Transformers `gemma4_unified` implementation; processor previews reconstruct its already merged 48 px patches and count one soft token per merged patch. E4B retains its original 16 px patch reconstruction and pooling-based token accounting.
+
+Model loading is deferred until predictions are missing, and internally created models are released after completion or failure. Reducing test IDs reduces runtime, not model-weight memory. To select another unquantized source manually, pass `--model-id`, its full `--model-revision`, `--quantization`, `--quantize-on-load`, and a new `--output-dir`. Quantize-on-load rejects checkpoints with stored quantization metadata so a 4-bit checkpoint cannot silently masquerade as an 8-bit conversion. The historical prequantized config still requires a BF16-capable GPU and verifies stored NF4 state before inference.
+
+### Expected INT8 casting message
+
+With BF16 or FP32 activations, bitsandbytes' INT8 backend casts its inputs to FP16 before activation quantization. The messages `MatMul8bitLt: inputs will be cast from torch.bfloat16 to float16 during quantization` and `MatMul8bitLt: inputs will be cast from torch.float32 to float16 during quantization` report that internal cast; quantized linear weights remain INT8. See the [bitsandbytes implementation](https://github.com/bitsandbytes-foundation/bitsandbytes/blob/main/bitsandbytes/autograd/_functions.py).
+
+The `rendering-eval` console command and `Belebele_models.ipynb` suppress only these two exact warnings from `bitsandbytes.autograd._functions`. Other warnings, errors, and casts from other dtypes remain visible. This only changes logging; model precision, generation, scoring, and inference-source fingerprints stay unchanged, so existing resumable runs remain compatible.
+
+After updating an existing checkout, refresh the console entry point without downloading dependencies or model weights:
+
+```bash
+.venv/bin/python -m pip install --no-deps --no-build-isolation -e .
+```
+
+Suppression applies to subsequent CLI launches or after running the new notebook's setup cell; an already-running process keeps its current logging. For a custom Python entry point, call `from rendering_eval.diagnostics import silence_expected_int8_cast_warning` and then `silence_expected_int8_cast_warning()` before inference. Direct `python -m rendering_eval` invocation bypasses the console logging setup.
 
 ## OpenRouter
 
@@ -78,11 +108,15 @@ Remote image resizing, quantization, and model weight revisions are provider-man
 .venv/bin/rendering-eval preview --config configs/smoke.yaml
 ```
 
-`prepare` validates question identity and correct-answer alignment across all source rows, selects the seeded IDs, and checks selected renderings for missing glyphs and clipping. `preview` also checks local processor inputs. Open `Belebele.ipynb` to see original images, actual local processor-patch reconstructions, paired accuracy, and answer transitions. Set `CONFIG_PATH` in the notebook to inspect another run; notebook inference stays disabled by default with `RUN_EVALUATION=False`.
+`prepare` validates question identity and correct-answer alignment across all source rows, selects the seeded IDs, and checks selected renderings for missing glyphs and clipping. `preview` also checks local processor inputs. Open `Belebele_models.ipynb` to see original images, actual local processor-patch reconstructions, paired accuracy, and answer transitions. Set `CONFIG_PATH` in the notebook to inspect another run; notebook inference stays disabled by default with `RUN_EVALUATION=False`.
 
 The text and image conditions use the exact same task string and answer order, plus the same short English instruction. Images contain the entire passage, question, and A–D choices. There is no duplicated task text or answer key in the image prompt.
 
 Rendering uses a readable default: 24 px, black on white, 1,024 px width, 24 px margins, and natural height. Script-appropriate Noto Sans fonts and Pango handle shaping, wrapping, and directionality. Font/size sweeps remain deferred. Local Gemma uses a fixed budget of 280 soft image tokens; long pages may shrink.
+
+Here, a **soft image token** means a vector of image features, not a word or character. The project retained the processor's default of **280**; this was an implementation choice, not a user-selected limit or the model's maximum. Supported budgets are 70, 140, 280, 560, and **1120**. [Google recommends higher budgets for document reading and small text](https://huggingface.co/google/gemma-4-E4B-it#5-variable-image-resolution). A larger budget can preserve more image detail but needs more compute and memory; GPU fit at 1120 has not been established here. Changing the budget requires a separately named run. The completed INT8 results continue to describe their actual 280-token setting.
+
+Local previews show the original page and the page after Gemma preprocessing. Their headings use explicit 32 px bold text and 24 px dimension labels on a separate header band. The headings, shared canvas, and extra alignment whitespace are display-only and never enter model inputs. Neither view displays dummy tensor-padding patches; ordinary page margins remain visible.
 
 ## Artifacts and reproducibility
 
@@ -96,10 +130,10 @@ Rendering uses a readable default: 24 px, black on white, 1,024 px width, 24 px 
 Notebook frontends can embed visible outputs during save/autosave. Clear displays with the notebook's final cell before saving, or sanitize a saved notebook:
 
 ```bash
-python3 scripts/clean_notebook.py Belebele.ipynb
+python3 scripts/clean_notebook.py Belebele_models.ipynb
 ```
 
-The dataset is pinned to `facebook/belebele@7899cdfa4e1e0d733fd77c848e2c273cb1d32be2`, and the local prequantized model to `unsloth/gemma-4-E4B-it-unsloth-bnb-4bit@6f10b2aa522ba471321d8246fd71a3dfa8c5b9a2`. The renderer is installed as a package dependency at `sign/pixel-renderer@9706296afca3dc156d76ff82450fff0fefc6f3d7`; a local document adapter uses its Pango/Cairo infrastructure without modifying upstream. Fonts use Google Fonts revision `601944d2ee97e76d4c456dc3d790db358c0c6ec5`.
+The dataset is pinned to `facebook/belebele@7899cdfa4e1e0d733fd77c848e2c273cb1d32be2`. The new model sources are [Google E4B instruction-tuned](https://huggingface.co/google/gemma-4-E4B-it) at `ee0ef6023621cff504d758262d4e04895a5af4a2` and [Google 12B instruction-tuned](https://huggingface.co/google/gemma-4-12B-it) at `43c9d014b231474fa7212dbb48a762566c2b255d`. Their INT8/NF4 loading follows [Transformers bitsandbytes support](https://huggingface.co/docs/transformers/quantization/bitsandbytes). The historical prequantized model remains pinned to `unsloth/gemma-4-E4B-it-unsloth-bnb-4bit@6f10b2aa522ba471321d8246fd71a3dfa8c5b9a2`. The renderer is installed as a package dependency at `sign/pixel-renderer@9706296afca3dc156d76ff82450fff0fefc6f3d7`; a local document adapter uses its Pango/Cairo infrastructure without modifying upstream. Fonts use Google Fonts revision `601944d2ee97e76d4c456dc3d790db358c0c6ec5`.
 
 The Hub export omits passage-level `split`, so the loader verifies uniqueness of `(link, question_number)`; it includes `split` if present. Languages must have identical IDs and answer labels. Selection uses seeded hash ordering rather than positional joins. Resume checks source/data/configuration hashes and execution compatibility. The loader expands saved module-subtree exclusions to match the current Transformers API and verifies that every quantized layer has quantization state before inference. Stored weight values and intended layer precisions are preserved.
 

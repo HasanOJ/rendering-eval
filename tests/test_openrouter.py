@@ -81,14 +81,14 @@ def test_remote_truncation_and_backend_identity(monkeypatch):
     assert backend.generate(example(), "text").truncated
     assert config().experiment()["quantization"] is None
     assert config().experiment()["max_soft_tokens"] is None
-    assert Config().experiment()["quantization"] == "bitsandbytes-prequantized-nf4"
-    assert replace(Config(), quantization="8bit", prequantized=False).experiment() != Config().experiment()
+    assert Config().experiment()["quantization"] == "bitsandbytes-int8"
+    assert replace(Config(), quantization="4bit").experiment() != Config().experiment()
 
 
 def test_full_configuration_and_cli_overrides(monkeypatch):
     from rendering_eval.cli import main
     assert Config.from_yaml("configs/full.yaml").n_ids == 900
-    assert Config.from_yaml("configs/full.yaml").quantization == "4bit"
+    assert Config.from_yaml("configs/full.yaml").quantization == "8bit"
     received = []
     monkeypatch.setattr("rendering_eval.runner.run", lambda cfg, **kwargs: received.append(cfg))
     monkeypatch.setattr("rendering_eval.analysis.analyze", lambda *args, **kwargs: {})

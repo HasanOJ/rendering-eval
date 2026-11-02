@@ -7,7 +7,7 @@ LANGUAGES = (
     "tha_Thai", "khm_Khmr", "mya_Mymr", "zho_Hans", "jpn_Jpan", "kor_Hang",
 )
 DATASET_REVISION = "7899cdfa4e1e0d733fd77c848e2c273cb1d32be2"
-MODEL_REVISION = "6f10b2aa522ba471321d8246fd71a3dfa8c5b9a2"
+MODEL_REVISION = "ee0ef6023621cff504d758262d4e04895a5af4a2"
 RENDERER_REVISION = "9706296afca3dc156d76ff82450fff0fefc6f3d7"
 FONT_REVISION = "601944d2ee97e76d4c456dc3d790db358c0c6ec5"
 INSTRUCTION = (
@@ -18,17 +18,17 @@ INSTRUCTION = (
 
 @dataclass(frozen=True)
 class Config:
-    output_dir: str = "results/belebele-smoke-4bit"
+    output_dir: str = "results/belebele-e4b-8bit-smoke"
     n_ids: int = 2
     seed: int = 42
     languages: tuple[str, ...] = LANGUAGES
     dataset_id: str = "facebook/belebele"
     dataset_revision: str = DATASET_REVISION
-    model_id: str = "unsloth/gemma-4-E4B-it-unsloth-bnb-4bit"
+    model_id: str = "google/gemma-4-E4B-it"
     model_revision: str = MODEL_REVISION
     backend: str = "local"
-    quantization: str = "4bit"
-    prequantized: bool = True
+    quantization: str = "8bit"
+    prequantized: bool = False
     attention_implementation: str = "eager"
     openrouter_free_only: bool = False
     openrouter_provider: str | None = None

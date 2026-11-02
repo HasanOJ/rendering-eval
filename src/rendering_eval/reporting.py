@@ -1,7 +1,6 @@
-"""Read-only run auditing, paired passage bootstrap, and in-memory result plots.
+"""Read-only auditing, measured accuracies, and in-memory result plots.
 
-This module never loads a model, downloads data, or writes image files. Bootstrap
-units are passage IDs: their questions AND all translations move together.
+This module never loads a model, downloads data, or writes image files.
 """
 
 from collections import Counter
@@ -30,46 +29,6 @@ IMAGE_COLOR = "#df752d"
 
 def _name(language):
     return LANGUAGE_NAMES.get(language, language)
-
-
-def paired_passage_bootstrap(pairs, languages, *, repetitions=5000, seed=42):
-    """Percentile 95% intervals for text, image, and paired image-minus-text.
-
-    Ratio estimates weight questions equally, even when passage sizes differ.
-    The same resampled passages are used for every language and both modalities.
-    These are corpus-sampling intervals, not model-seed/quantization uncertainty.
-    """
-    if repetitions < 100:
-        raise ValueError("Use at least 100 bootstrap repetitions")
-    passages = sorted(pairs.passage_id.unique())
-    if not passages:
-        raise ValueError("No complete pairs to bootstrap")
-    columns = ["ALL", *languages]
-    totals = np.zeros((len(passages), len(columns), 3), dtype=float)
-    passage_index = {value: i for i, value in enumerate(passages)}
-    for column, language in enumerate(columns):
-        group = pairs if language == "ALL" else pairs[pairs.language == language]
-        for row in group.itertuples():
-            totals[passage_index[row.passage_id], column] += (
-                row.text_correct, row.image_correct, 1,
-            )
-    # Multinomial multiplicities implement sampling N passage IDs with replacement.
-    weights = np.random.default_rng(seed).multinomial(
-        len(passages), np.full(len(passages), 1 / len(passages)), size=repetitions,
-    )
-    samples = (weights @ totals.reshape(len(passages), -1)).reshape(repetitions, len(columns), 3)
-    intervals = {}
-    for i, language in enumerate(columns):
-        nonempty = samples[:, i, 2] > 0
-        values = samples[nonempty, i, :2] / samples[nonempty, i, 2, None] * 100
-        if not len(values):
-            continue
-        values = np.column_stack([values, values[:, 1] - values[:, 0]])
-        intervals[language] = {
-            key: np.quantile(values[:, j], [0.025, 0.975]).tolist()
-            for j, key in enumerate(("text_ci95_pct", "image_ci95_pct", "gap_ci95_pp"))
-        }
-    return intervals
 
 
 def load_pairs(output_dir):
@@ -124,14 +83,13 @@ def load_pairs(output_dir):
     return manifest, rows, pd.DataFrame(paired)
 
 
-def build_report(output_dir, *, repetitions=5000, seed=42):
+def build_report(output_dir):
     """Return JSON-serializable derived metrics; leave the original run untouched."""
     root = Path(output_dir)
     manifest, rows, pairs = load_pairs(root)
     summary = analyze(root, save=False)
     languages = manifest["experiment"]["languages"]
-    intervals = paired_passage_bootstrap(pairs, languages, repetitions=repetitions, seed=seed)
-    groups = [{**g, **intervals.get(g["language"], {})} for g in summary["groups"]]
+    groups = summary["groups"]
     answer_distributions, invalid, resizing, quartiles = [], [], [], []
     frame = pd.DataFrame(rows)
     gold = Counter(pairs.answer)
@@ -193,7 +151,7 @@ def build_report(output_dir, *, repetitions=5000, seed=42):
     original_files = ("manifest.json", "selected_ids.json", "predictions.jsonl", "metrics.json",
                       "rendering_metadata.json", "execution.json", "sessions.jsonl", "errors.jsonl")
     return {
-        "schema_version": 1, "output_dir": root.as_posix(), "manifest_fingerprint": manifest["fingerprint"],
+        "schema_version": 2, "output_dir": root.as_posix(), "manifest_fingerprint": manifest["fingerprint"],
         "experiment": manifest["experiment"], "status": summary["status"],
         "audit": {
             "expected_predictions": summary["expected_predictions"], "predictions": len(rows),
@@ -204,12 +162,6 @@ def build_report(output_dir, *, repetitions=5000, seed=42):
             "unknown_glyphs": int(pairs.render_unknown_glyphs.fillna(0).sum()),
             "original_artifact_sha256": {name: sha256((root / name).read_bytes()).hexdigest()
                                          for name in original_files if (root / name).exists()},
-        },
-        "uncertainty": {
-            "method": "paired percentile passage-cluster bootstrap",
-            "confidence_level": 0.95, "repetitions": repetitions, "seed": seed,
-            "unit": "passage_id; all questions, translations, and modalities resampled together",
-            "interpretation": "Corpus-sampling sensitivity; not repeated inference or model-seed uncertainty.",
         },
         "groups": groups, "answer_distributions": answer_distributions,
         "gold_answer_counts": {label: gold[label] for label in "ABCD"},
@@ -230,12 +182,15 @@ def _table(headers, rows):
 def markdown_report(report):
     overall, *languages = report["groups"]
     audit, experiment = report["audit"], report["experiment"]
-    ci = overall["gap_ci95_pp"]
+    strongest_image = max(languages, key=lambda g: g["image_accuracy"])
+    preferences = sorted(
+        (item for item in report["answer_distributions"] if item["mode"] == "image"),
+        key=lambda item: max(item["counts"][c] for c in "ABCD") / item["n"], reverse=True,
+    )[:3]
     lines = [
         "# Belebele: full text versus rendered-image evaluation", "",
         f"**Text {overall['text_accuracy'] * 100:.2f}%; image {overall['image_accuracy'] * 100:.2f}%; "
-        f"image minus text {overall['image_minus_text_pp']:.2f} percentage points.** "
-        f"Passage-cluster bootstrap 95% interval for the gap: [{ci[0]:.2f}, {ci[1]:.2f}] points.", "",
+        f"image minus text {overall['image_minus_text_pp']:.2f} percentage points.**", "",
         f"{audit['predictions']:,}/{audit['expected_predictions']:,} predictions ({report['status']}), "
         f"{audit['paired_examples']:,} paired examples, {audit['unique_questions']} aligned questions, "
         f"{audit['unique_passages']} distinct passages, {len(experiment['languages'])} languages. "
@@ -246,18 +201,12 @@ def markdown_report(report):
         f"{experiment['width']} px wide, {experiment['margin']} px margins, natural height; "
         f"image budget {experiment['max_soft_tokens']} soft tokens, answer budget {experiment['max_new_tokens']} tokens.", "",
         "## Per-language results", "",
-        _table(["Language", "Pairs", "Text %", "Image %", "Gap (pp)", "Gap 95% interval (pp)", "Invalid image"], [
+        _table(["Language", "Pairs", "Text %", "Image %", "Gap (pp)", "Invalid image"], [
             [_name(g["language"]), g["paired_examples"], f"{100 * g['text_accuracy']:.2f}",
              f"{100 * g['image_accuracy']:.2f}", f"{g['image_minus_text_pp']:.2f}",
-             f"[{g['gap_ci95_pp'][0]:.2f}, {g['gap_ci95_pp'][1]:.2f}]",
              next(x['invalid'] for x in report['invalid_by_language_mode']
                   if x['language'] == g['language'] and x['mode'] == 'image')]
             for g in languages]), "",
-        "Intervals resample passages with replacement, keeping both questions from a passage, "
-        f"all translations, and both modalities together ({report['uncertainty']['repetitions']:,} replicates, "
-        f"seed {report['uncertainty']['seed']}). They describe sensitivity to the passage sample. "
-        "They do not measure inference randomness, and are pointwise rather than simultaneous intervals. "
-        "The evaluated 900-question corpus itself has no sampling error in its reported accuracy.", "",
         "## Paired outcomes", "",
         _table(["Outcome", "Count", "Share of pairs"], [
             [label, f"{overall[field]:,}", f"{overall[field] / overall['paired_examples'] * 100:.2f}%"]
@@ -306,8 +255,11 @@ def markdown_report(report):
         "They describe this hardware/software run, not a general model speed comparison.", "",
         "## Interpretation and next experiment", "",
         "This run shows a large end-to-end text/image gap under one quantized checkpoint and rendering/processor "
-        "configuration. English has the strongest image accuracy; every tested language loses accuracy in image mode. "
-        "The image answer distributions reveal pronounced option-position preferences, particularly in Khmer and Arabic. "
+        f"configuration. {_name(strongest_image['language'])} has the strongest image accuracy. "
+        "The largest image answer-choice concentrations are " + "; ".join(
+            f"{_name(item['language'])}: {max('ABCD', key=lambda c: item['counts'][c])} "
+            f"({max(item['counts'][c] for c in 'ABCD') / item['n'] * 100:.2f}% of responses)"
+            for item in preferences) + ". "
         "These are observed behaviors, not evidence of a specific OCR or script mechanism.", "",
         "A useful next controlled comparison is to rerun identical IDs with a larger image budget (560 or 1120 tokens) "
         "in a new output directory, checking GPU fit first. Compare paired changes within each language, retain "
@@ -318,7 +270,7 @@ def markdown_report(report):
         "```bash", f".venv/bin/python scripts/analyze_results.py --output-dir {report['output_dir']}", "```", "",
         "Open `Belebele_analysis.ipynb` for plots. It needs no model, dataset download, renderer, or GPU. "
         "Plots live only in notebook memory; clear outputs before saving. Original run artifacts remain unchanged. "
-        "The derived `analysis.json` contains original-file SHA-256 hashes, all tables, bootstrap settings, and run configuration.", "",
+        "The derived `analysis.json` contains original-file SHA-256 hashes, all measured tables and run configuration.", "",
         f"Manifest fingerprint: `{report['manifest_fingerprint']}`. "
         f"Dataset: `{experiment['dataset_id']}@{experiment['dataset_revision']}`. "
         "See README for dataset, model, font, and renderer attribution.", "",
@@ -344,12 +296,12 @@ def plot_overview(report):
     axes[0].invert_yaxis()
     axes[0].legend(loc="upper center", bbox_to_anchor=(.5, -.10), ncol=3, frameon=False, fontsize=9)
     gaps = np.array([g["image_minus_text_pp"] for g in groups])
-    bounds = np.array([g["gap_ci95_pp"] for g in groups])
-    axes[1].errorbar(gaps, y, xerr=np.vstack([gaps - bounds[:, 0], bounds[:, 1] - gaps]),
-                     fmt="o", color=IMAGE_COLOR, capsize=3)
+    axes[1].barh(y, gaps, height=.55, color=IMAGE_COLOR)
+    for yy, value in zip(y, gaps):
+        axes[1].text(value / 2, yy, f"{value:.2f}", ha="center", va="center", color="white", fontsize=10)
     axes[1].axvline(0, color="#7b8794", linestyle=":")
-    axes[1].set(yticks=y, yticklabels=[], ylim=axes[0].get_ylim(), xlim=(min(-56, bounds.min() - 3), 2),
-                xlabel="Image minus text (percentage points)", title="Paired gap · 95% passage-bootstrap interval")
+    axes[1].set(yticks=y, yticklabels=[], ylim=axes[0].get_ylim(), xlim=(min(-56, gaps.min() - 3), max(2, gaps.max() + 3)),
+                xlabel="Image minus text (percentage points)", title="Measured accuracy difference")
     transitions = np.array([[overall["both_correct"], overall["text_only_correct"]],
                             [overall["image_only_correct"], overall["both_wrong"]]])
     axes[2].imshow(transitions / transitions.sum() * 100, cmap="Blues", vmin=0, vmax=50)
@@ -361,7 +313,11 @@ def plot_overview(report):
             count = transitions[yy, xx]
             axes[2].text(xx, yy, f"{count:,}\n{count / transitions.sum():.1%}", ha="center", va="center",
                          fontsize=13, color="white" if count / transitions.sum() > .35 else "#172b4d")
-    figure.suptitle(f"Belebele · Gemma 4 E4B NF4 · Text {100 * overall['text_accuracy']:.2f}% → "
+    experiment = report["experiment"]
+    model = experiment.get("model_id", "model not recorded").rsplit("/", 1)[-1]
+    precision = {"bitsandbytes-int8": "INT8", "bitsandbytes-prequantized-nf4": "NF4",
+                 "bitsandbytes-nf4-double": "NF4"}.get(experiment.get("quantization"), "")
+    figure.suptitle(f"Belebele · {model} {precision} · Text {100 * overall['text_accuracy']:.2f}% → "
                    f"Image {100 * overall['image_accuracy']:.2f}% ({overall['image_minus_text_pp']:.2f} pp)", fontsize=17)
     return figure
 

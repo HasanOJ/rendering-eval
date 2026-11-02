@@ -1,0 +1,8 @@
+# All 900 aligned IDs in the same 12-language subset: 21,600 predictions.
+output_dir: results/belebele-12b-4bit-full
+n_ids: 900
+backend: local
+model_id: google/gemma-4-12B-it
+model_revision: 43c9d014b231474fa7212dbb48a762566c2b255d
+quantization: 4bit
+prequantized: false

@@ -1,0 +1,8 @@
+# Quantize the official BF16 source on load; no model download until explicitly run.
+output_dir: results/belebele-12b-4bit-smoke
+n_ids: 2
+backend: local
+model_id: google/gemma-4-12B-it
+model_revision: 43c9d014b231474fa7212dbb48a762566c2b255d
+quantization: 4bit
+prequantized: false

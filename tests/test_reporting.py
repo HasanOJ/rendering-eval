@@ -1,11 +1,10 @@
 import json
 from pathlib import Path
 
-import pandas as pd
 import pytest
 
 from rendering_eval.reporting import (
-    build_report, load_pairs, paired_passage_bootstrap, plot_answer_bias,
+    build_report, load_pairs, plot_answer_bias,
     plot_diagnostics, plot_overview,
 )
 from rendering_eval.scoring import score_answer
@@ -39,33 +38,17 @@ def completed_run(tmp_path):
     return tmp_path
 
 
-def test_passage_bootstrap_keeps_questions_and_translations_together():
-    # Every question is in one passage, so passage resampling has no variability.
-    # Resampling question/translation rows independently would falsely create it.
-    frame = pd.DataFrame([
-        {"passage_id": "one", "language": language, "text_correct": i < 2, "image_correct": i == 2}
-        for language in ("en", "ar") for i in range(3)
-    ])
-    intervals = paired_passage_bootstrap(frame, ["en", "ar"], repetitions=200)
-    for language in ("ALL", "en", "ar"):
-        assert intervals[language]["gap_ci95_pp"] == pytest.approx([-100 / 3, -100 / 3])
-        assert intervals[language]["text_ci95_pct"] == pytest.approx([200 / 3, 200 / 3])
-    # Replicating translations must not narrow the interval.
-    frame.loc[len(frame)] = ["second", "en", False, True]
-    frame.loc[len(frame)] = ["second", "ar", False, True]
-    result = paired_passage_bootstrap(frame, ["en", "ar"], repetitions=1000)
-    assert result["ALL"] == result["en"] == result["ar"]
-
-
 def test_audit_replays_scores_and_leaves_originals_unchanged(completed_run):
     before = {p.name: p.read_bytes() for p in completed_run.iterdir()}
-    report = build_report(completed_run, repetitions=200)
+    report = build_report(completed_run)
     assert report["audit"]["predictions"] == 12
     assert report["audit"]["paired_examples"] == 6
     assert report["audit"]["unique_passages"] == 2
     assert report["groups"][0]["text_accuracy"] == pytest.approx(2 / 3)
     assert report["groups"][0]["image_accuracy"] == pytest.approx(1 / 3)
     assert report["groups"][0]["image_minus_text_pp"] == pytest.approx(-100 / 3)
+    assert "uncertainty" not in report
+    assert all(not any("ci95" in key for key in group) for group in report["groups"])
     assert {p.name: p.read_bytes() for p in completed_run.iterdir()} == before
     path = completed_run / "predictions.jsonl"
     rows = [json.loads(line) for line in path.read_text().splitlines()]
@@ -83,7 +66,7 @@ def test_analysis_figures_never_save_images(completed_run, monkeypatch):
         raise AssertionError("Plot files must not be saved")
 
     monkeypatch.setattr(Figure, "savefig", forbidden)
-    report = build_report(completed_run, repetitions=200)
+    report = build_report(completed_run)
     for plot in (plot_overview, plot_answer_bias, plot_diagnostics):
         figure = plot(report)
         assert len(figure.axes) >= 2
@@ -101,3 +84,20 @@ def test_analysis_notebook_is_clean_and_has_no_inference():
     assert "from rendering_eval.runner" not in code
     assert "from rendering_eval.backends" not in code
     assert "savefig" not in code
+    assert 'RESULTS_DIR = Path("results/belebele-e4b-8bit-full")' in code
+    assert "bootstrap" not in code.lower()
+    assert "ci95" not in code
+
+
+@pytest.mark.parametrize("model,quantization,precision", [
+    ("google/gemma-4-E4B-it", "bitsandbytes-int8", "INT8"),
+    ("google/gemma-4-12B-it", "bitsandbytes-nf4-double", "NF4"),
+])
+def test_overview_title_uses_saved_model_and_precision(completed_run, model, quantization, precision):
+    import matplotlib.pyplot as plt
+    report = build_report(completed_run)
+    report["experiment"].update(model_id=model, quantization=quantization)
+    figure = plot_overview(report)
+    assert model.rsplit("/", 1)[-1] in figure._suptitle.get_text()
+    assert precision in figure._suptitle.get_text()
+    plt.close(figure)

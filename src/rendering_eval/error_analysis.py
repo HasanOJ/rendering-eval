@@ -115,6 +115,48 @@ class ErrorExplorer:
         fields["quantization"] = "4bit" if "nf4" in (experiment.get("quantization") or "") else "8bit"
         return Config(**{**fields, "output_dir": str(self.root)})
 
+    def representative_cases(self, limit=8):
+        """Select illustrative cases from this run, with notes based on saved scores."""
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        ordered = self.pairs.sort_values(["sample_id", "language"])
+        studies, seen = [], set()
+
+        def add(group):
+            for row in group.itertuples():
+                key = row.sample_id, row.language
+                if key in seen:
+                    continue
+                text, image = self.index[(*key, "text")], self.index[(*key, "image")]
+                studies.append({
+                    "title": f"{LANGUAGE_NAMES.get(row.language, row.language)}: {row.outcome}",
+                    "sample_id": row.sample_id, "language": row.language,
+                    "note": f"Selected from the current run. Gold {row.answer}; "
+                            f"text {'correct' if text['correct'] else 'incorrect'}; "
+                            f"image {'correct' if image['correct'] else 'incorrect'}. "
+                            f"Image response: {response_description(image)}.",
+                })
+                seen.add(key)
+                return
+
+        # Reserve space for contrasting outcomes after invalid-response examples.
+        for language in self.manifest["experiment"]["languages"]:
+            add(ordered[(ordered.language == language) & ~ordered.image_valid])
+            if len(studies) >= min(4, limit):
+                break
+        for outcome in ("text only", "image only", "both wrong", "both correct"):
+            if len(studies) >= limit:
+                break
+            group = ordered[ordered.outcome == outcome]
+            english = group[group.language == "eng_Latn"]
+            add(english if len(english) else group)
+        while len(studies) < limit:
+            before = len(studies)
+            add(ordered[~ordered.image_correct])
+            if len(studies) == before:
+                break
+        return studies
+
     def sources(self):
         """Read pinned source JSONL strictly from the Hub cache; never download it."""
         if self._sources is None:

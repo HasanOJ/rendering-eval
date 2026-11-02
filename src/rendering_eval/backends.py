@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 import time
 import re
+import math
 
 from .prompts import messages_for
 
@@ -46,16 +47,27 @@ def encode(processor, config, example, mode, image=None):
     )
 
 
+def processor_patch_geometry(inputs, processor):
+    """E4B emits teacher patches; Unified 12B emits already merged patches."""
+    features = inputs["pixel_values"].shape[-1]
+    patch = math.isqrt(features // 3)
+    base = processor.image_processor.patch_size
+    pooled = base * processor.image_processor.pooling_kernel_size
+    if features != patch * patch * 3 or patch not in (base, pooled):
+        raise ValueError(f"Unsupported processor patch geometry: {features} values")
+    return patch, (pooled // patch) ** 2
+
+
 def image_input_metadata(inputs, processor):
     positions = inputs["image_position_ids"][0].detach().cpu().numpy()
     valid = (positions >= 0).all(axis=1)
     positions = positions[valid]
-    patch = processor.image_processor.patch_size
+    patch, patches_per_token = processor_patch_geometry(inputs, processor)
     return {
         "processed_width": int(positions[:, 0].max() + 1) * patch,
         "processed_height": int(positions[:, 1].max() + 1) * patch,
         "real_patches": int(valid.sum()), "padded_patches": int((~valid).sum()),
-        "soft_tokens": int(valid.sum()) // processor.image_processor.pooling_kernel_size ** 2,
+        "soft_tokens": int(valid.sum()) // patches_per_token,
     }
 
 
@@ -66,7 +78,7 @@ def reconstruct_processor_image(inputs, processor):
 
     info = image_input_metadata(inputs, processor)
     image_processor = processor.image_processor
-    patch = image_processor.patch_size
+    patch, _ = processor_patch_geometry(inputs, processor)
     positions = inputs["image_position_ids"][0].detach().cpu().numpy()
     values = inputs["pixel_values"][0].detach().float().cpu().numpy()
     canvas = np.zeros((info["processed_height"], info["processed_width"], 3), dtype=np.float32)
@@ -92,8 +104,8 @@ class GemmaBackend:
         self.processor = processor if processor is not None else load_processor(config)
         self.device = torch.device("cuda:0")
         self.compute_dtype = torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        saved = AutoConfig.from_pretrained(config.model_id, revision=config.model_revision)
         if config.prequantized:
-            saved = AutoConfig.from_pretrained(config.model_id, revision=config.model_revision)
             quantization = getattr(saved, "quantization_config", {})
             if quantization.get("quant_method") != "bitsandbytes" or not quantization.get("load_in_4bit"):
                 raise ValueError("The selected checkpoint does not contain prequantized 4-bit weights")
@@ -107,6 +119,9 @@ class GemmaBackend:
                                          checkpoint_skip_patterns(self.checkpoint_skip_modules)}
             loading_options = {"config": saved}
         else:
+            if getattr(saved, "quantization_config", None):
+                raise ValueError("Quantize-on-load requires an unquantized source checkpoint; "
+                                 "select the official BF16 model instead of requantizing stored weights")
             quantization = BitsAndBytesConfig(
                 load_in_4bit=True, bnb_4bit_quant_type="nf4", bnb_4bit_use_double_quant=True,
                 bnb_4bit_compute_dtype=self.compute_dtype,

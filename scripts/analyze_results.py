@@ -9,13 +9,11 @@ from rendering_eval.reporting import build_report, markdown_report
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output-dir", default="results/belebele-full-4bit")
+    parser.add_argument("--output-dir", default="results/belebele-e4b-8bit-full")
     parser.add_argument("--report", help="Markdown path; defaults to reports/<run-directory-name>.md")
-    parser.add_argument("--bootstrap", type=int, default=5000)
-    parser.add_argument("--seed", type=int, default=42)
     args = parser.parse_args()
     root = Path(args.output_dir)
-    report = build_report(root, repetitions=args.bootstrap, seed=args.seed)
+    report = build_report(root)
     destination = Path(args.report) if args.report else Path("reports") / f"{root.name}.md"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(markdown_report(report), encoding="utf-8")
